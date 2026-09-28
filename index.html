@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PP Printers POS</title>
+<style>
+:root{--bg:#f4f7fb;--card:#fff;--ink:#172033;--muted:#667085;--line:#d9e0ea;--primary:#173b70;--green:#16803c;--red:#b42318;--orange:#a15c00}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Arial,Tahoma,sans-serif}
+header{background:var(--primary);color:#fff;padding:14px 18px;position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;gap:10px;align-items:center}
+header h1{margin:0;font-size:22px}header small{opacity:.8}
+nav{display:flex;gap:6px;padding:9px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:67px;z-index:9;overflow:auto}
+nav button{border:0;background:#edf1f6;padding:9px 12px;border-radius:8px;white-space:nowrap;cursor:pointer}nav button.active{background:var(--primary);color:#fff}
+main{max-width:1350px;margin:auto;padding:15px}.page{display:none}.page.active{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:13px;box-shadow:0 2px 7px #00000008}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.stat b{display:block;font-size:25px;margin-top:6px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}label{font-size:13px;color:var(--muted)}
+input,select,textarea{width:100%;padding:10px;border:1px solid #ccd5e1;border-radius:7px;background:#fff;margin:4px 0 9px}textarea{min-height:70px}
+button,.btn{border:0;border-radius:7px;padding:9px 13px;cursor:pointer;background:#edf1f6;color:var(--ink)}button.primary,.primary{background:var(--primary);color:#fff}.green{background:var(--green)!important;color:#fff}.red{background:var(--red)!important;color:#fff}.orange{background:var(--orange)!important;color:#fff}
+.actions{display:flex;gap:7px;flex-wrap:wrap}.right{text-align:right}.muted{color:var(--muted)}
+table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:8px;border-bottom:1px solid var(--line);text-align:left}th{background:#edf2f7}
+.tablewrap{overflow:auto}.pill{padding:3px 7px;border-radius:12px;background:#edf1f6;font-size:12px}
+.modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;padding:12px;z-index:30}.modal.show{display:flex}.modalbox{background:#fff;width:min(900px,100%);max-height:94vh;overflow:auto;border-radius:12px;padding:18px}
+.invoice{max-width:820px;margin:auto;background:#fff;padding:24px;color:#111}.invoice h2{text-align:center;margin:0 0 5px}.invoice .head{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid #222;padding-bottom:12px}.invoice table{margin-top:18px}.invoice th{background:#eee}.invoice .totals{margin-left:auto;width:300px;max-width:100%}
+.toast{position:fixed;bottom:18px;right:18px;background:#111;color:#fff;padding:11px 15px;border-radius:8px;display:none;z-index:50}
+@media(max-width:650px){header{top:0}header h1{font-size:18px}nav{top:61px}main{padding:9px}.card{padding:10px}th,td{font-size:12px;padding:6px}}
+@media print{body{background:#fff}header,nav,main>.page:not(#invoice),#invoice>.no-print,.modal .actions{display:none!important}.modal{position:static;display:block;background:#fff;padding:0}.modalbox{max-height:none;box-shadow:none}.invoice{padding:10px}}
+</style>
+</head>
+<body>
+<header><div><h1>PP Printers POS</h1><small>Printing Business • Billing • Stock • Accounts</small></div><div id="clock"></div></header>
+<nav id="nav">
+<button data-page="dashboard">Dashboard</button><button data-page="invoice">New Invoice</button><button data-page="invoices">Invoices</button>
+<button data-page="customers">Customers / Ledger</button><button data-page="items">Items / Stock</button><button data-page="purchases">Purchase</button>
+<button data-page="expenses">Expenses</button><button data-page="accounts">Bank / Cash</button><button data-page="reports">Reports</button><button data-page="backup">Backup</button><button data-page="cloud">Cloud Sync</button>
+</nav>
+<main>
+<section id="dashboard" class="page active">
+<h2>Dashboard</h2><div class="grid" id="stats"></div>
+<div class="card"><h3>Quick Actions</h3><div class="actions"><button class="primary" onclick="go('invoice')">+ New Invoice</button><button onclick="go('customers')">+ Customer</button><button onclick="go('expenses')">+ Expense</button><button onclick="go('purchases')">+ Purchase</button></div></div>
+<div class="card"><h3>Recent Invoices</h3><div id="recent"></div></div>
+</section>
+
+<section id="invoice" class="page">
+<h2>Customer Bill / Invoice</h2>
+<div class="card">
+<div class="row"><div><label>Customer</label><select id="invCustomer"></select></div><div><label>Date</label><input id="invDate" type="date"></div><div><label>Payment Account</label><select id="invAccount"></select></div><div><label>Job No.</label><input id="jobNo" placeholder="PP-0001"></div></div>
+<div class="row"><div><label>Paid / Advance</label><input id="invPaid" type="number" min="0" value="0"></div><div><label>Discount</label><input id="invDiscount" type="number" min="0" value="0"></div><div><label>Notes</label><input id="invNotes"></div></div>
+<div class="tablewrap"><table><thead><tr><th>Printing Item / Job</th><th>Qty</th><th>Rate</th><th>Total</th><th></th></tr></thead><tbody id="cart"></tbody></table></div>
+<div class="actions" style="margin-top:10px"><button onclick="addLine()">+ Item</button><button class="primary green" onclick="saveInvoice()">Save Invoice</button><button onclick="previewDraft()">Preview</button></div>
+<h3 class="right">Subtotal: <span id="subtotal">0.00</span><br>Discount: <span id="discountOut">0.00</span><br>Grand Total: <span id="grand">0.00</span><br>Balance: <span id="bal">0.00</span></h3>
+</div>
+</section>
+
+<section id="invoices" class="page"><h2>Saved Invoices</h2><div class="card"><div class="row"><input id="invSearch" placeholder="Search invoice/customer/job"><input id="invMonth" type="month"><button onclick="renderInvoices()">Search</button></div></div><div class="card tablewrap"><table><thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Total</th><th>Paid</th><th>Balance</th><th>Action</th></tr></thead><tbody id="invoiceTable"></tbody></table></div></section>
+
+<section id="customers" class="page"><h2>Customers / Ledger</h2><div class="card"><div class="row"><input id="cName" placeholder="Customer name"><input id="cPhone" placeholder="WhatsApp / Phone"><input id="cAddress" placeholder="Address"><button class="primary" onclick="addCustomer()">Add Customer</button></div></div><div class="card tablewrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Total Sales</th><th>Due</th><th>Action</th></tr></thead><tbody id="customerTable"></tbody></table></div></section>
+
+<section id="items" class="page"><h2>Items / Services / Stock</h2><div class="card"><div class="row"><input id="iName" placeholder="Visiting Cards / Flex / Paper"><select id="iType"><option>Service</option><option>Stock</option></select><input id="iRate" type="number" placeholder="Default Sale Rate"><input id="iStock" type="number" placeholder="Opening Stock"><button class="primary" onclick="addItem()">Add Item</button></div></div><div class="card tablewrap"><table><thead><tr><th>Name</th><th>Type</th><th>Rate</th><th>Stock</th><th>Action</th></tr></thead><tbody id="itemTable"></tbody></table></div></section>
+
+<section id="purchases" class="page"><h2>Purchase</h2><div class="card"><div class="row"><input id="pVendor" placeholder="Supplier"><input id="pItem" placeholder="Paper / Ink / Material"><input id="pQty" type="number" placeholder="Qty"><input id="pAmount" type="number" placeholder="Amount"><select id="pAccount"></select><input id="pDate" type="date"><button class="primary" onclick="savePurchase()">Save Purchase</button></div></div><div class="card tablewrap"><table><thead><tr><th>Date</th><th>Supplier</th><th>Item</th><th>Qty</th><th>Amount</th></tr></thead><tbody id="purchaseTable"></tbody></table></div></section>
+
+<section id="expenses" class="page"><h2>Daily Expenses</h2><div class="card"><div class="row"><input id="eTitle" placeholder="Electricity / Fuel / Salary / Other"><input id="eAmount" type="number" placeholder="Amount"><select id="eAccount"></select><input id="eDate" type="date"><button class="primary" onclick="saveExpense()">Save Expense</button></div></div><div class="card tablewrap"><table><thead><tr><th>Date</th><th>Expense</th><th>Account</th><th>Amount</th></tr></thead><tbody id="expenseTable"></tbody></table></div></section>
+
+<section id="accounts" class="page"><h2>Bank / Cash Accounts</h2><div class="card"><div class="row"><input id="aName" placeholder="Cash / Meezan Bank / HBL"><select id="aType"><option>Cash</option><option>Bank</option></select><input id="aOpening" type="number" placeholder="Opening Balance"><button class="primary" onclick="addAccount()">Add Account</button></div></div><div class="card tablewrap"><table><thead><tr><th>Account</th><th>Type</th><th>Current Balance</th></tr></thead><tbody id="accountTable"></tbody></table></div>
+<div class="card"><h3>Customer Payment / Receipt</h3><div class="row"><select id="payCustomer"></select><select id="payAccount"></select><input id="payAmount" type="number" placeholder="Received Amount"><input id="payDate" type="date"><input id="payNote" placeholder="Note"><button class="green" onclick="savePayment()">Save Receipt</button></div></div></section>
+
+<section id="reports" class="page"><h2>Monthly Reports</h2><div class="card"><div class="row"><input id="reportMonth" type="month"><button class="primary" onclick="renderReport()">Show Report</button></div><div id="reportOut"></div></div></section>
+
+<section id="backup" class="page"><h2>Backup / Restore</h2><div class="card"><p>یہ HTML version browser میں data محفوظ کرتا ہے۔ مختلف devices پر data منتقل کرنے کے لیے Backup file استعمال کریں۔</p><div class="actions"><button class="primary" onclick="downloadBackup()">Download Backup</button><label class="btn">Restore Backup<input hidden type="file" accept=".json" onchange="restoreBackup(event)"></label><button class="red" onclick="wipe()">Delete All Data</button></div></div></section>
+
+<section id="cloud" class="page">
+  <h2>Cloud Sync</h2>
+  <div class="card">
+    <p><b>PP Printers Cloud Database</b></p>
+    <p class="muted">Login with the same email on your other PC/mobile to access the same cloud data.</p>
+    <div class="row">
+      <input id="cloudEmail" type="email" placeholder="Email">
+      <input id="cloudPassword" type="password" placeholder="Password">
+      <button class="primary" onclick="cloudSignUp()">Create Account</button>
+      <button onclick="cloudLogin()">Login</button>
+      <button onclick="cloudLogout()">Logout</button>
+    </div>
+    <p id="cloudStatus" class="muted">Not logged in</p>
+  </div>
+  <div class="card">
+    <div class="actions">
+      <button class="primary" onclick="uploadCloud()">Upload Local → Cloud</button>
+      <button class="green" onclick="downloadCloud()">Download Cloud → Local</button>
+    </div>
+    <p class="muted">Use Upload after entering invoices/customers/expenses. On another device, login first and then use Download Cloud → Local.</p>
+  </div>
+</section>
+
+</main>
+
+<div class="modal" id="modal"><div class="modalbox"><div id="modalContent"></div><div class="actions no-print" style="margin-top:10px"><button class="primary" onclick="window.print()">Print / Save PDF</button><button class="green" onclick="whatsappLast()">WhatsApp</button><button onclick="closeModal()">Close</button></div></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const KEY='PP_PRINTERS_POS_FULL_V1';
+let db=JSON.parse(localStorage.getItem(KEY)||'{"customers":[],"items":[],"accounts":[],"invoices":[],"purchases":[],"expenses":[],"payments":[]}');
+const $=id=>document.getElementById(id), today=()=>new Date().toISOString().slice(0,10);
+function persist(){localStorage.setItem(KEY,JSON.stringify(db));renderAll();toast('Saved')}
+function toast(t){$('toast').textContent=t;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',1800)}
+function go(page){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));$(page).classList.add('active');document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===page));renderAll()}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>go(b.dataset.page));
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+function money(n){return Number(n||0).toFixed(2)}
+function accountName(id){return db.accounts.find(a=>a.id==id)?.name||'-'}
+function customerName(id){return db.customers.find(c=>c.id==id)?.name||'Walk-in'}
+function customerDue(id){return db.invoices.filter(i=>i.customerId==id).reduce((s,i)=>s+i.balance,0)-db.payments.filter(p=>p.customerId==id).reduce((s,p)=>s+p.amount,0)}
+function accountBalance(a){return Number(a.opening||0)+db.invoices.filter(i=>i.accountId==a.id).reduce((s,i)=>s+i.paid,0)+db.payments.filter(p=>p.accountId==a.id).reduce((s,p)=>s+p.amount,0)-db.purchases.filter(p=>p.accountId==a.id).reduce((s,p)=>s+p.amount,0)-db.expenses.filter(e=>e.accountId==a.id).reduce((s,e)=>s+e.amount,0)}
+
+function addCustomer(){let name=$('cName').value.trim();if(!name)return alert('Enter customer name');db.customers.push({id:Date.now(),name,phone:$('cPhone').value,address:$('cAddress').value});$('cName').value='';$('cPhone').value='';$('cAddress').value='';persist()}
+function addItem(){let name=$('iName').value.trim();if(!name)return alert('Enter item');db.items.push({id:Date.now(),name,type:$('iType').value,rate:+$('iRate').value||0,stock:+$('iStock').value||0});$('iName').value='';$('iRate').value='';$('iStock').value='';persist()}
+function addAccount(){let name=$('aName').value.trim();if(!name)return alert('Enter account');db.accounts.push({id:Date.now(),name,type:$('aType').value,opening:+$('aOpening').value||0});$('aName').value='';$('aOpening').value='';persist()}
+
+function addLine(item={name:'',qty:1,rate:0,itemId:''}){let tr=document.createElement('tr');tr.innerHTML=`<td><input class="ln" value="${esc(item.name)}" list="itemList"><datalist id="itemList">${db.items.map(i=>`<option value="${esc(i.name)}">`).join('')}</datalist></td><td><input class="lq" type="number" min="0" value="${item.qty}"></td><td><input class="lr" type="number" min="0" value="${item.rate}"></td><td class="lt">0.00</td><td><button class="red" onclick="this.closest('tr').remove();calcCart()">X</button></td>`;$('cart').appendChild(tr);tr.querySelectorAll('input').forEach(x=>x.oninput=calcCart);calcCart()}
+function calcCart(){let sub=0;document.querySelectorAll('#cart tr').forEach(r=>{let t=(+r.querySelector('.lq').value||0)*(+r.querySelector('.lr').value||0);r.querySelector('.lt').textContent=money(t);sub+=t});let dis=+$('invDiscount').value||0,total=Math.max(0,sub-dis),paid=+$('invPaid').value||0;$('subtotal').textContent=money(sub);$('discountOut').textContent=money(dis);$('grand').textContent=money(total);$('bal').textContent=money(total-paid)}
+$('invPaid').oninput=calcCart;$('invDiscount').oninput=calcCart;
+
+function newInvoice(){go('invoice');$('cart').innerHTML='';addLine();$('invDate').value=today();$('jobNo').value='';$('invPaid').value=0;$('invDiscount').value=0;$('invNotes').value='';calcCart()}
+function saveInvoice(){let rows=[...document.querySelectorAll('#cart tr')].map(r=>({name:r.querySelector('.ln').value.trim(),qty:+r.querySelector('.lq').value||0,rate:+r.querySelector('.lr').value||0})).filter(x=>x.name&&x.qty>0);if(!rows.length)return alert('Add invoice items');let sub=rows.reduce((s,x)=>s+x.qty*x.rate,0),discount=+$('invDiscount').value||0,total=Math.max(0,sub-discount),paid=Math.min(total,Math.max(0,+$('invPaid').value||0));let inv={id:Date.now(),no:'PP-'+String(Date.now()).slice(-7),date:$('invDate').value||today(),customerId:+$('invCustomer').value||null,accountId:+$('invAccount').value||null,jobNo:$('jobNo').value,notes:$('invNotes').value,items:rows,subtotal:sub,discount,total,paid,balance:total-paid};db.invoices.push(inv);rows.forEach(x=>{let it=db.items.find(i=>i.name.toLowerCase()===x.name.toLowerCase());if(it&&it.type==='Stock')it.stock-=x.qty});persist();showInvoice(inv);newInvoice()}
+function previewDraft(){let rows=[...document.querySelectorAll('#cart tr')].map(r=>({name:r.querySelector('.ln').value,qty:+r.querySelector('.lq').value,rate:+r.querySelector('.lr').value}));let sub=rows.reduce((s,x)=>s+x.qty*x.rate,0),d=+$('invDiscount').value||0,t=Math.max(0,sub-d),p=+$('invPaid').value||0;showInvoice({no:'PREVIEW',date:$('invDate').value||today(),customerId:+$('invCustomer').value||null,jobNo:$('jobNo').value,items:rows,subtotal:sub,discount:d,total:t,paid:p,balance:t-p,notes:$('invNotes').value})}
+
+function invoiceHTML(i){let c=db.customers.find(x=>x.id==i.customerId);return `<div class="invoice"><div class="head"><div><h2>PP PRINTERS</h2><div>Printing & Design Services</div></div><div><b>INVOICE</b><br>${esc(i.no)}<br>${esc(i.date)}</div></div><p><b>Customer:</b> ${esc(c?.name||'Walk-in Customer')} ${c?.phone?' | '+esc(c.phone):''}<br><b>Job No:</b> ${esc(i.jobNo||'-')}</p><table><tr><th>Item / Job</th><th>Qty</th><th>Rate</th><th>Total</th></tr>${i.items.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.qty}</td><td>${money(x.rate)}</td><td>${money(x.qty*x.rate)}</td></tr>`).join('')}</table><div class="totals"><p>Subtotal: ${money(i.subtotal)}</p><p>Discount: ${money(i.discount)}</p><h3>Grand Total: ${money(i.total)}</h3><p>Paid: ${money(i.paid)}</p><h3>Balance: ${money(i.balance)}</h3></div><p>${esc(i.notes||'Thank you for your business.')}</p></div>`}
+function showInvoice(i){window.lastInvoice=i;$('modalContent').innerHTML=invoiceHTML(i);$('modal').classList.add('show')}
+function closeModal(){$('modal').classList.remove('show')}
+function whatsappLast(){let i=window.lastInvoice,c=db.customers.find(x=>x.id==i.customerId),phone=(c?.phone||'').replace(/\D/g,'');let msg=`PP Printers%0AInvoice: ${i.no}%0ADate: ${i.date}%0ACustomer: ${c?.name||'Customer'}%0ATotal: ${money(i.total)}%0APaid: ${money(i.paid)}%0ABalance: ${money(i.balance)}`;window.open('https://wa.me/'+phone+'?text='+msg,'_blank')}
+
+function savePurchase(){let amount=+$('pAmount').value||0;if(!amount)return alert('Enter amount');db.purchases.push({id:Date.now(),date:$('pDate').value||today(),vendor:$('pVendor').value,item:$('pItem').value,qty:+$('pQty').value||0,amount,accountId:+$('pAccount').value||null});$('pVendor').value='';$('pItem').value='';$('pQty').value='';$('pAmount').value='';persist()}
+function saveExpense(){let amount=+$('eAmount').value||0;if(!amount)return alert('Enter amount');db.expenses.push({id:Date.now(),date:$('eDate').value||today(),title:$('eTitle').value,amount,accountId:+$('eAccount').value||null});$('eTitle').value='';$('eAmount').value='';persist()}
+function savePayment(){let amount=+$('payAmount').value||0,cid=+$('payCustomer').value||0;if(!cid||!amount)return alert('Select customer and amount');db.payments.push({id:Date.now(),date:$('payDate').value||today(),customerId:cid,accountId:+$('payAccount').value||null,amount,notes:$('payNote').value});$('payAmount').value='';$('payNote').value='';persist()}
+
+function renderAll(){populate();renderDashboard();renderInvoices();renderCustomers();renderItems();renderPurchases();renderExpenses();renderAccounts();renderReport()}
+function populate(){let cust='<option value="">Walk-in Customer</option>'+db.customers.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');$('invCustomer').innerHTML=cust;$('payCustomer').innerHTML='<option value="">Select Customer</option>'+db.customers.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');let acc='<option value="">Select Account</option>'+db.accounts.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('');$('invAccount').innerHTML=acc;$('pAccount').innerHTML=acc;$('eAccount').innerHTML=acc;$('payAccount').innerHTML=acc}
+function renderDashboard(){let m=today().slice(0,7),sales=db.invoices.filter(i=>i.date===today()).reduce((s,i)=>s+i.total,0),ms=db.invoices.filter(i=>i.date.startsWith(m)).reduce((s,i)=>s+i.total,0),ex=db.expenses.filter(i=>i.date.startsWith(m)).reduce((s,i)=>s+i.amount,0),pu=db.purchases.filter(i=>i.date.startsWith(m)).reduce((s,i)=>s+i.amount,0),due=db.invoices.reduce((s,i)=>s+i.balance,0)-db.payments.reduce((s,p)=>s+p.amount,0);$('stats').innerHTML=`<div class="card stat">Today Sales<b>${money(sales)}</b></div><div class="card stat">Month Sales<b>${money(ms)}</b></div><div class="card stat">Month Expenses<b>${money(ex)}</b></div><div class="card stat">Month Purchase<b>${money(pu)}</b></div><div class="card stat">Customer Due<b>${money(due)}</b></div>`;$('recent').innerHTML=db.invoices.slice().reverse().slice(0,10).map(i=>`<p><b>${i.no}</b> — ${esc(customerName(i.customerId))} — ${money(i.total)} <button onclick="showInvoice(db.invoices.find(x=>x.id==${i.id}))">View</button></p>`).join('')||'<p class="muted">No invoices yet.</p>'}
+function renderInvoices(){let q=($('invSearch')?.value||'').toLowerCase(),m=$('invMonth')?.value||'';let arr=db.invoices.filter(i=>(!q||(i.no+' '+customerName(i.customerId)+' '+(i.jobNo||'')).toLowerCase().includes(q))&&(!m||i.date.startsWith(m))).slice().reverse();$('invoiceTable').innerHTML=arr.map(i=>`<tr><td>${i.no}</td><td>${i.date}</td><td>${esc(customerName(i.customerId))}</td><td>${money(i.total)}</td><td>${money(i.paid)}</td><td>${money(i.balance)}</td><td><button onclick="showInvoice(db.invoices.find(x=>x.id==${i.id}))">View</button></td></tr>`).join('')}
+function renderCustomers(){$('customerTable').innerHTML=db.customers.map(c=>{let sales=db.invoices.filter(i=>i.customerId==c.id).reduce((s,i)=>s+i.total,0),due=customerDue(c.id);return `<tr><td>${esc(c.name)}</td><td>${esc(c.phone||'')}</td><td>${money(sales)}</td><td>${money(due)}</td><td><button onclick="ledger(${c.id})">Ledger</button></td></tr>`}).join('')}
+function ledger(id){let c=db.customers.find(x=>x.id==id),inv=db.invoices.filter(i=>i.customerId==id),pay=db.payments.filter(p=>p.customerId==id);$('modalContent').innerHTML=`<div class="invoice"><h2>Customer Ledger</h2><h3>${esc(c.name)}</h3><table><tr><th>Date</th><th>Details</th><th>Debit</th><th>Credit</th><th>Balance</th></tr>${inv.map(i=>`<tr><td>${i.date}</td><td>${i.no}</td><td>${money(i.total)}</td><td>${money(i.paid)}</td><td>${money(i.balance)}</td></tr>`).join('')}${pay.map(p=>`<tr><td>${p.date}</td><td>Payment Receipt</td><td>0</td><td>${money(p.amount)}</td><td>-</td></tr>`).join('')}</table><h3>Outstanding: ${money(customerDue(id))}</h3></div>`;$('modal').classList.add('show')}
+function renderItems(){$('itemTable').innerHTML=db.items.map(i=>`<tr><td>${esc(i.name)}</td><td>${i.type}</td><td>${money(i.rate)}</td><td>${i.stock}</td><td><button onclick="deleteItem(${i.id})">Delete</button></td></tr>`).join('')}
+function deleteItem(id){if(confirm('Delete item?')){db.items=db.items.filter(i=>i.id!=id);persist()}}
+function renderPurchases(){$('purchaseTable').innerHTML=db.purchases.slice().reverse().map(p=>`<tr><td>${p.date}</td><td>${esc(p.vendor)}</td><td>${esc(p.item)}</td><td>${p.qty}</td><td>${money(p.amount)}</td></tr>`).join('')}
+function renderExpenses(){$('expenseTable').innerHTML=db.expenses.slice().reverse().map(e=>`<tr><td>${e.date}</td><td>${esc(e.title)}</td><td>${esc(accountName(e.accountId))}</td><td>${money(e.amount)}</td></tr>`).join('')}
+function renderAccounts(){$('accountTable').innerHTML=db.accounts.map(a=>`<tr><td>${esc(a.name)}</td><td>${a.type}</td><td>${money(accountBalance(a))}</td></tr>`).join('')}
+function renderReport(){let m=$('reportMonth')?.value||today().slice(0,7),iv=db.invoices.filter(i=>i.date.startsWith(m)),pu=db.purchases.filter(i=>i.date.startsWith(m)),ex=db.expenses.filter(i=>i.date.startsWith(m)),received=iv.reduce((s,i)=>s+i.paid,0)+db.payments.filter(p=>p.date.startsWith(m)).reduce((s,p)=>s+p.amount,0),sales=iv.reduce((s,i)=>s+i.total,0),purchase=pu.reduce((s,i)=>s+i.amount,0),expense=ex.reduce((s,i)=>s+i.amount,0);$('reportOut').innerHTML=`<div class="grid"><div class="card stat">Sales<b>${money(sales)}</b></div><div class="card stat">Received<b>${money(received)}</b></div><div class="card stat">Purchase<b>${money(purchase)}</b></div><div class="card stat">Expenses<b>${money(expense)}</b></div><div class="card stat">Sales − Purchase − Expense<b>${money(sales-purchase-expense)}</b></div></div><p>Invoices: ${iv.length} | Payments received: ${db.payments.filter(p=>p.date.startsWith(m)).length}</p>`}
+function downloadBackup(){let blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'}),u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download='PP-Printers-Backup-'+today()+'.json';a.click();URL.revokeObjectURL(u)}
+function restoreBackup(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{db=JSON.parse(r.result);persist();alert('Backup restored')}catch{alert('Invalid backup')}};r.readAsText(f)}
+function wipe(){if(confirm('All PP Printers data will be deleted. Continue?')){localStorage.removeItem(KEY);location.reload()}}
+$('invDate').value=today();$('pDate').value=today();$('eDate').value=today();$('payDate').value=today();$('reportMonth').value=today().slice(0,7);
+setInterval(()=>$('clock').textContent=new Date().toLocaleString(),1000);
+addLine();renderAll();
+
+const SUPABASE_URL = 'https://ooxomojatihlflqoysor.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_PF_76THAysJos8NOpp6tbw_TH7YFTRE';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+let cloudUser = null;
+
+function cloudStatus(t){ const el=$('cloudStatus'); if(el) el.textContent=t; }
+
+async function cloudInit(){
+  try{
+    const {data} = await sb.auth.getUser();
+    cloudUser = data?.user || null;
+    cloudStatus(cloudUser ? 'Logged in: '+cloudUser.email : 'Not logged in');
+  }catch(e){ cloudStatus('Cloud connection error: '+e.message); }
+}
+async function cloudSignUp(){
+  const email=$('cloudEmail').value.trim(), password=$('cloudPassword').value;
+  if(!email || !password) return alert('Email aur password enter karein');
+  if(password.length < 6) return alert('Password kam az kam 6 characters ka ho');
+  const {data,error}=await sb.auth.signUp({email,password});
+  if(error) return alert(error.message);
+  cloudUser=data.user || null;
+  cloudStatus(data.session ? 'Account created and logged in: '+email : 'Account created. Email confirmation check karein, phir Login karein.');
+}
+async function cloudLogin(){
+  const email=$('cloudEmail').value.trim(), password=$('cloudPassword').value;
+  if(!email || !password) return alert('Email aur password enter karein');
+  const {data,error}=await sb.auth.signInWithPassword({email,password});
+  if(error) return alert(error.message);
+  cloudUser=data.user;
+  cloudStatus('Logged in: '+cloudUser.email);
+}
+async function cloudLogout(){
+  await sb.auth.signOut();
+  cloudUser=null;
+  cloudStatus('Not logged in');
+}
+async function uploadCloud(){
+  if(!cloudUser){
+    const {data}=await sb.auth.getUser();
+    cloudUser=data?.user || null;
+  }
+  if(!cloudUser) return alert('Pehle Cloud Sync mein Login karein');
+  const payload={user_id:cloudUser.id, data:db, updated_at:new Date().toISOString()};
+  const {error}=await sb.from('pp_printers_data').upsert(payload,{onConflict:'user_id'});
+  if(error) return alert('Upload error: '+error.message);
+  cloudStatus('Cloud par data upload ho gaya: '+new Date().toLocaleString());
+  alert('Cloud backup successful');
+}
+async function downloadCloud(){
+  if(!cloudUser){
+    const {data}=await sb.auth.getUser();
+    cloudUser=data?.user || null;
+  }
+  if(!cloudUser) return alert('Pehle Cloud Sync mein Login karein');
+  const {data,error}=await sb.from('pp_printers_data').select('data,updated_at').eq('user_id',cloudUser.id).maybeSingle();
+  if(error) return alert('Download error: '+error.message);
+  if(!data) return alert('Cloud mein abhi koi data nahi hai. Pehle Upload Local → Cloud karein.');
+  if(!data.data) return alert('Cloud record mein data nahi mila.');
+  db=data.data;
+  persist();
+  cloudStatus('Cloud se data download ho gaya: '+(data.updated_at||''));
+  alert('Cloud data local app mein restore ho gaya');
+}
+sb.auth.onAuthStateChange((_event,session)=>{
+  cloudUser=session?.user || null;
+  cloudStatus(cloudUser ? 'Logged in: '+cloudUser.email : 'Not logged in');
+});
+setTimeout(cloudInit,300);
+
+</script>
+</body>
+</html>
