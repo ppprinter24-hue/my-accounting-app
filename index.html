@@ -74,7 +74,7 @@ table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:8px;bord
   <h2>Cloud Sync</h2>
   <div class="card">
     <p><b>PP Printers Cloud Database</b></p>
-    <p class="muted">Login with the same email on your other PC/mobile to access the same cloud data.</p>
+    <p class="muted">Same account on PC, laptop, mobile and tablet. Data automatically saves to the cloud when you save a record.</p>
     <div class="row">
       <input id="cloudEmail" type="email" placeholder="Email">
       <input id="cloudPassword" type="password" placeholder="Password">
@@ -82,14 +82,14 @@ table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:8px;bord
       <button onclick="cloudLogin()">Login</button>
       <button onclick="cloudLogout()">Logout</button>
     </div>
-    <p id="cloudStatus" class="muted">Not logged in</p>
+    <p id="cloudStatus" class="muted">Not logged in</p><p class="muted">☁ Automatic Sync: ON</p>
   </div>
   <div class="card">
     <div class="actions">
-      <button class="primary" onclick="uploadCloud()">Upload Local → Cloud</button>
-      <button class="green" onclick="downloadCloud()">Download Cloud → Local</button>
+      <button class="primary" onclick="uploadCloud()">Sync Now → Cloud</button>
+      <button class="green" onclick="downloadCloud()">Reload Cloud Data</button>
     </div>
-    <p class="muted">Use Upload after entering invoices/customers/expenses. On another device, login first and then use Download Cloud → Local.</p>
+    <p class="muted">Automatic Sync is ON. After login, this device loads the cloud data. Saved changes are automatically uploaded.</p>
   </div>
 </section>
 
@@ -102,7 +102,12 @@ table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:8px;bord
 const KEY='PP_PRINTERS_POS_FULL_V1';
 let db=JSON.parse(localStorage.getItem(KEY)||'{"customers":[],"items":[],"accounts":[],"invoices":[],"purchases":[],"expenses":[],"payments":[]}');
 const $=id=>document.getElementById(id), today=()=>new Date().toISOString().slice(0,10);
-function persist(){localStorage.setItem(KEY,JSON.stringify(db));renderAll();toast('Saved')}
+function persist(skipCloud=false){
+  localStorage.setItem(KEY,JSON.stringify(db));
+  renderAll();
+  toast('Saved');
+  if(!skipCloud) scheduleCloudUpload();
+}
 function toast(t){$('toast').textContent=t;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',1800)}
 function go(page){document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));$(page).classList.add('active');document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===page));renderAll()}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>go(b.dataset.page));
@@ -157,71 +162,185 @@ const SUPABASE_URL = 'https://ooxomojatihlflqoysor.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_PF_76THAysJos8NOpp6tbw_TH7YFTRE';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 let cloudUser = null;
+let cloudSyncTimer = null;
+let cloudSyncBusy = false;
+let cloudSyncReady = false;
 
-function cloudStatus(t){ const el=$('cloudStatus'); if(el) el.textContent=t; }
+function cloudStatus(t){
+  const el=$('cloudStatus');
+  if(el) el.textContent=t;
+}
 
-async function cloudInit(){
+function localDataHasContent(){
+  return !!(db.customers.length || db.items.length || db.accounts.length ||
+    db.invoices.length || db.purchases.length || db.expenses.length || db.payments.length);
+}
+
+async function getCloudUser(){
   try{
     const {data} = await sb.auth.getUser();
     cloudUser = data?.user || null;
-    cloudStatus(cloudUser ? 'Logged in: '+cloudUser.email : 'Not logged in');
-  }catch(e){ cloudStatus('Cloud connection error: '+e.message); }
+    return cloudUser;
+  }catch(e){
+    cloudUser = null;
+    return null;
+  }
 }
+
+async function readCloudRecord(){
+  if(!cloudUser) return null;
+  const {data,error}=await sb.from('pp_printers_data')
+    .select('data,updated_at')
+    .eq('user_id',cloudUser.id)
+    .maybeSingle();
+  if(error) throw error;
+  return data;
+}
+
+async function syncAfterLogin(){
+  if(!cloudUser || cloudSyncBusy) return;
+  cloudSyncBusy=true;
+  try{
+    const data=await readCloudRecord();
+    if(data && data.data){
+      db=data.data;
+      localStorage.setItem(KEY,JSON.stringify(db));
+      renderAll();
+      cloudSyncReady=true;
+      cloudStatus('Logged in: '+cloudUser.email+' • Cloud data loaded ✓');
+    }else{
+      cloudSyncReady=true;
+      cloudSyncBusy=false;
+      if(localDataHasContent()) await uploadCloud(true);
+      else cloudStatus('Logged in: '+cloudUser.email+' • Cloud empty');
+      return;
+    }
+  }catch(e){
+    cloudSyncReady=false;
+    cloudStatus('Auto Sync error: '+e.message);
+  }finally{
+    cloudSyncBusy=false;
+  }
+}
+
+async function cloudInit(){
+  try{
+    const {data}=await sb.auth.getUser();
+    cloudUser=data?.user || null;
+    if(cloudUser){
+      cloudStatus('Logged in: '+cloudUser.email+' • Syncing...');
+      await syncAfterLogin();
+    }else cloudStatus('Not logged in');
+  }catch(e){
+    cloudStatus('Cloud connection error: '+e.message);
+  }
+}
+
 async function cloudSignUp(){
   const email=$('cloudEmail').value.trim(), password=$('cloudPassword').value;
   if(!email || !password) return alert('Email aur password enter karein');
-  if(password.length < 6) return alert('Password kam az kam 6 characters ka ho');
+  if(password.length<6) return alert('Password kam az kam 6 characters ka ho');
   const {data,error}=await sb.auth.signUp({email,password});
   if(error) return alert(error.message);
-  cloudUser=data.user || null;
-  cloudStatus(data.session ? 'Account created and logged in: '+email : 'Account created. Email confirmation check karein, phir Login karein.');
+  cloudUser=data.user||null;
+  if(data.session && cloudUser){
+    cloudStatus('Account created and logged in. Syncing...');
+    await syncAfterLogin();
+  }else cloudStatus('Account created. Email confirmation check karein, phir Login karein.');
 }
+
 async function cloudLogin(){
   const email=$('cloudEmail').value.trim(), password=$('cloudPassword').value;
   if(!email || !password) return alert('Email aur password enter karein');
   const {data,error}=await sb.auth.signInWithPassword({email,password});
   if(error) return alert(error.message);
   cloudUser=data.user;
-  cloudStatus('Logged in: '+cloudUser.email);
+  cloudStatus('Logged in: '+cloudUser.email+' • Syncing...');
+  await syncAfterLogin();
 }
+
 async function cloudLogout(){
+  clearTimeout(cloudSyncTimer);
   await sb.auth.signOut();
   cloudUser=null;
+  cloudSyncReady=false;
   cloudStatus('Not logged in');
 }
-async function uploadCloud(){
-  if(!cloudUser){
-    const {data}=await sb.auth.getUser();
-    cloudUser=data?.user || null;
-  }
-  if(!cloudUser) return alert('Pehle Cloud Sync mein Login karein');
-  const payload={user_id:cloudUser.id, data:db, updated_at:new Date().toISOString()};
-  const {error}=await sb.from('pp_printers_data').upsert(payload,{onConflict:'user_id'});
-  if(error) return alert('Upload error: '+error.message);
-  cloudStatus('Cloud par data upload ho gaya: '+new Date().toLocaleString());
-  alert('Cloud backup successful');
-}
-async function downloadCloud(){
-  if(!cloudUser){
-    const {data}=await sb.auth.getUser();
-    cloudUser=data?.user || null;
-  }
-  if(!cloudUser) return alert('Pehle Cloud Sync mein Login karein');
-  const {data,error}=await sb.from('pp_printers_data').select('data,updated_at').eq('user_id',cloudUser.id).maybeSingle();
-  if(error) return alert('Download error: '+error.message);
-  if(!data) return alert('Cloud mein abhi koi data nahi hai. Pehle Upload Local → Cloud karein.');
-  if(!data.data) return alert('Cloud record mein data nahi mila.');
-  db=data.data;
-  persist();
-  cloudStatus('Cloud se data download ho gaya: '+(data.updated_at||''));
-  alert('Cloud data local app mein restore ho gaya');
-}
-sb.auth.onAuthStateChange((_event,session)=>{
-  cloudUser=session?.user || null;
-  cloudStatus(cloudUser ? 'Logged in: '+cloudUser.email : 'Not logged in');
-});
-setTimeout(cloudInit,300);
 
+async function uploadCloud(silent=false){
+  if(!cloudUser) await getCloudUser();
+  if(!cloudUser){
+    if(!silent) alert('Pehle Cloud Sync mein Login karein');
+    return false;
+  }
+  if(cloudSyncBusy) return false;
+  cloudSyncBusy=true;
+  try{
+    const payload={user_id:cloudUser.id,data:db,updated_at:new Date().toISOString()};
+    const {error}=await sb.from('pp_printers_data').upsert(payload,{onConflict:'user_id'});
+    if(error) throw error;
+    cloudSyncReady=true;
+    cloudStatus('Logged in: '+cloudUser.email+' • Cloud synced ✓');
+    if(!silent) alert('Cloud sync successful');
+    return true;
+  }catch(e){
+    cloudStatus('Auto Sync error: '+e.message);
+    if(!silent) alert('Cloud sync error: '+e.message);
+    return false;
+  }finally{
+    cloudSyncBusy=false;
+  }
+}
+
+function scheduleCloudUpload(){
+  if(!cloudUser || !cloudSyncReady) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer=setTimeout(()=>uploadCloud(true),700);
+}
+
+async function downloadCloud(silent=false){
+  if(!cloudUser) await getCloudUser();
+  if(!cloudUser){
+    if(!silent) alert('Pehle Cloud Sync mein Login karein');
+    return false;
+  }
+  try{
+    const data=await readCloudRecord();
+    if(!data){
+      if(localDataHasContent()) return await uploadCloud(silent);
+      if(!silent) alert('Cloud mein abhi koi data nahi hai.');
+      return false;
+    }
+    if(!data.data){
+      if(!silent) alert('Cloud record mein data nahi mila.');
+      return false;
+    }
+    db=data.data;
+    localStorage.setItem(KEY,JSON.stringify(db));
+    renderAll();
+    cloudSyncReady=true;
+    cloudStatus('Logged in: '+cloudUser.email+' • Cloud data loaded ✓');
+    if(!silent) alert('Cloud data loaded successfully');
+    return true;
+  }catch(e){
+    cloudStatus('Cloud download error: '+e.message);
+    if(!silent) alert('Download error: '+e.message);
+    return false;
+  }
+}
+
+sb.auth.onAuthStateChange((_event,session)=>{
+  cloudUser=session?.user||null;
+  if(cloudUser){
+    cloudStatus('Logged in: '+cloudUser.email+' • Syncing...');
+    setTimeout(()=>syncAfterLogin(),0);
+  }else{
+    cloudSyncReady=false;
+    cloudStatus('Not logged in');
+  }
+});
+
+setTimeout(cloudInit,300);
 </script>
 </body>
 </html>
