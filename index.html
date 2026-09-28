@@ -153,7 +153,34 @@ function renderAccounts(){$('accountTable').innerHTML=db.accounts.map(a=>`<tr><t
 function renderReport(){let m=$('reportMonth')?.value||today().slice(0,7),iv=db.invoices.filter(i=>i.date.startsWith(m)),pu=db.purchases.filter(i=>i.date.startsWith(m)),ex=db.expenses.filter(i=>i.date.startsWith(m)),received=iv.reduce((s,i)=>s+i.paid,0)+db.payments.filter(p=>p.date.startsWith(m)).reduce((s,p)=>s+p.amount,0),sales=iv.reduce((s,i)=>s+i.total,0),purchase=pu.reduce((s,i)=>s+i.amount,0),expense=ex.reduce((s,i)=>s+i.amount,0);$('reportOut').innerHTML=`<div class="grid"><div class="card stat">Sales<b>${money(sales)}</b></div><div class="card stat">Received<b>${money(received)}</b></div><div class="card stat">Purchase<b>${money(purchase)}</b></div><div class="card stat">Expenses<b>${money(expense)}</b></div><div class="card stat">Sales − Purchase − Expense<b>${money(sales-purchase-expense)}</b></div></div><p>Invoices: ${iv.length} | Payments received: ${db.payments.filter(p=>p.date.startsWith(m)).length}</p>`}
 function downloadBackup(){let blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'}),u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download='PP-Printers-Backup-'+today()+'.json';a.click();URL.revokeObjectURL(u)}
 function restoreBackup(e){let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=()=>{try{db=JSON.parse(r.result);persist();alert('Backup restored')}catch{alert('Invalid backup')}};r.readAsText(f)}
-function wipe(){if(confirm('All PP Printers data will be deleted. Continue?')){localStorage.removeItem(KEY);location.reload()}}
+async function wipe(){
+  if(!confirm('All PP Printers data will be deleted from this device and Cloud. Continue?')) return;
+  clearTimeout(cloudSyncTimer);
+  const emptyDb={customers:[],items:[],accounts:[],invoices:[],purchases:[],expenses:[],payments:[]};
+  db=emptyDb;
+  localStorage.setItem(KEY,JSON.stringify(db));
+  renderAll();
+  if(!cloudUser){
+    try{ await getCloudUser(); }catch(e){}
+  }
+  if(cloudUser){
+    cloudSyncBusy=true;
+    try{
+      const payload={user_id:cloudUser.id,data:emptyDb,updated_at:new Date().toISOString()};
+      const {error}=await sb.from('pp_printers_data').upsert(payload,{onConflict:'user_id'});
+      if(error) throw error;
+      cloudSyncReady=true;
+      cloudStatus('Logged in: '+cloudUser.email+' • All data deleted ✓');
+    }catch(e){
+      alert('Local data delete ho gaya, lekin Cloud data delete nahi ho saka: '+e.message);
+      return;
+    }finally{
+      cloudSyncBusy=false;
+    }
+  }
+  alert('All PP Printers data deleted successfully.');
+  location.reload();
+}
 $('invDate').value=today();$('pDate').value=today();$('eDate').value=today();$('payDate').value=today();$('reportMonth').value=today().slice(0,7);
 setInterval(()=>$('clock').textContent=new Date().toLocaleString(),1000);
 addLine();renderAll();
